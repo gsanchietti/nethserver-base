@@ -261,3 +261,10 @@ event_actions('post-restore-config', qw(
     hostname-set       01
 ));
 
+
+#--------------------------------------------------
+# actions for ns-release-lock event
+#--------------------------------------------------
+event_actions('ns-release-lock', qw(
+    nethserver-base-ns-release-lock 20
+));
