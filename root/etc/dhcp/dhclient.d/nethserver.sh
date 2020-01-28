@@ -1,3 +1,4 @@
+#!/bin/bash
 #
 # Copyright (C) 2014 Nethesis S.r.l.
 # http://www.nethesis.it - support@nethesis.it

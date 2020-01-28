@@ -7,7 +7,6 @@ Source: %{name}-%{version}.tar.gz
 BuildArch: noarch
 URL: %{url_prefix}/%{name}
 
-Requires: bridge-utils
 Requires: sudo
 Requires: nc
 Requires: net-tools
@@ -18,11 +17,7 @@ Requires: yum-plugin-changelog
 Requires: nethserver-yum
 Requires: nethserver-lib, perl(NethServer::Database::Hostname)
 
-# yum-cron dependencies
-Requires: yum-cron
-Requires: perl-Email-Valid
-Provides: nethserver-yum-cron
-Obsoletes: nethserver-yum-cron
+Requires: dnf-automatic
 
 BuildRequires: nethserver-devtools
 Requires(post): systemd
