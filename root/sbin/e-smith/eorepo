@@ -1,0 +1,77 @@
+#!/usr/bin/python2
+
+# EnableOnlyRepo: disable all repositories except for the ones listed in command line
+# Example:
+#    eorepo [-v] repo1,repo2,repo3 
+
+#
+# Copyright (C) 2013 Nethesis S.r.l.
+# http://www.nethesis.it - support@nethesis.it
+# 
+# This script is part of NethServer.
+# 
+# NethServer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License,
+# or any later version.
+# 
+# NethServer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with NethServer.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Giacomo Sanchietti <giacomo.sanchietti@nethesis.i>
+#   Original work: Federico Simoncelli <federico.simoncelli@nethesis.it>
+
+import os
+import sys 
+import yum
+import string
+import syslog
+
+def usage():
+    print "eorepo -- Enable Only Repository\n";
+    print "          Usage: %s repo1 [repo2] ... \n" % sys.argv[0];
+    sys.exit(1);
+
+def disable_repo(enabled_repos,yumbase):
+    for repo in yumbase.repos.listEnabled():
+        if not repo.id in enabled_repos:
+            out_msg = "Repository %s (%s) has been disabled." % (repo.id, repo.name)
+            repo.disablePersistent()
+            syslog.syslog(out_msg + "\n");
+            print out_msg
+
+
+def enable_repo(enabled_repo,yumbase):
+    for id in enabled_repo:
+        repo = yumbase.repos.getRepo(id)
+        if repo.enabled != True:
+            out_msg = "Repository %s (%s) has been enabled." % (repo.id, repo.name)
+            repo.enablePersistent()
+            syslog.syslog(out_msg + "\n");
+            print out_msg
+
+
+def main ():
+    if len(sys.argv) < 2:
+        usage();
+
+    syslog.openlog('eorepo',syslog.LOG_PID);
+    ypbc = yum._YumPreBaseConf()
+    ypbc.debuglevel = -1
+    ypbc.errorlevel = -1
+    yumbase = yum.YumBase()
+    yumbase.preconf = ypbc
+
+    enabled_repos = sys.argv[1:]
+    disable_repo(enabled_repos,yumbase)
+    enable_repo(enabled_repos,yumbase)
+
+    sys.exit(0);
+
+if __name__ == "__main__":
+    main()

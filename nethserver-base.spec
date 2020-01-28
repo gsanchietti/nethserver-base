@@ -14,7 +14,7 @@ Requires: net-tools
 Requires: perl-TimeDate
 
 Requires: yum-plugin-changelog
-Requires: nethserver-yum
+Requires: python2-simplejson
 Requires: nethserver-lib, perl(NethServer::Database::Hostname)
 
 Requires: dnf-automatic
@@ -50,9 +50,11 @@ done
 %install
 rm -rf %{buildroot}
 (cd root   ; find . -depth -not -name '*.orig' -print  | cpio -dump %{buildroot})
-%{genfilelist} %{buildroot} | sed '
+%{genfilelist}  --file '/sbin/e-smith/event_queue' 'attr(0555,root,root)' %{buildroot} | sed '
 \|^%{_sysconfdir}/sudoers.d/| d
 \|^%{_sysconfdir}/nethserver/pkginfo.conf| d
+\|nethserver_events.pyc$| d
+\|nethserver_events.pyo$| d
 ' > %{name}-%{version}-%{release}-filelist
 
 %files -f %{name}-%{version}-%{release}-filelist
@@ -71,6 +73,7 @@ rm -rf %{buildroot}
 %ghost %attr(0644,root,root) /etc/logviewer.conf
 %config(noreplace) %{_sysconfdir}/nethserver/pkginfo.conf
 %config(noreplace) %{_sysconfdir}/nethserver/eorepo.conf
+%config(noreplace) %attr(0644,root,root) /etc/yum/pluginconf.d/nethserver_events.conf
 
 %post
 %systemd_post nethserver-system-init.service NetworkManager.service firewalld.service nethserver-config-network.service
