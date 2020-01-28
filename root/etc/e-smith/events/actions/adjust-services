@@ -1,0 +1,155 @@
+#!/usr/bin/perl -w
+#----------------------------------------------------------------------
+# copyright (C) 2005 Mitel Networks Corporation
+# 
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 		
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 		
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
+# 
+#----------------------------------------------------------------------
+package esmith;
+
+use strict;
+use Errno;
+use DirHandle;
+use NethServer::Service;
+use NethServer::TrackerClient;
+
+my $event = shift || die "must give event name parameter";
+my $dir = "/etc/e-smith/events/$event";
+chdir $dir or die "Couldn't chdir to event directory $dir: $!";
+my $dh = DirHandle->new("services2adjust");
+
+my $errors = 0;
+
+exit(0) unless $dh; # Nothing to do
+
+use esmith::ConfigDB;
+
+# Close STDIN to get rid of console escapes in
+# init scripts.  See /etc/sysconfig/init and /etc/init.d/functions
+close(STDIN);
+
+my @services = grep { !/^\./ } $dh->read();
+
+my $tracker = NethServer::TrackerClient->new();
+my %tasks = ();
+
+foreach (@services) {
+    $tasks{$_} = $tracker->declare_task("Adjust service $_");
+}
+
+foreach my $service (@services)
+{
+    my $s = NethServer::Service->new($service);
+
+    my $errorMessage = "";
+    my $successMessage = "";
+    my $action = '';
+    my @actions = ();
+    my $failed = 0;
+
+    # Start or stop the service, if its running state is not what we expect:
+    $s->adjust(\$action);
+
+    if ($action eq 'start') {
+	$successMessage = sprintf("%s has been started\n", $service);	
+	# Service just started: avoid doing restart or reload again
+	@actions = map { 
+	    my $a = $_; 
+	    (grep { $_ eq $a } qw(restart reload)) ? () : $a;
+	} get_actions($service);
+
+    } elsif ($action eq 'stop') {
+	$successMessage = sprintf("service %s %s and has been stopped\n", $service, get_reason($s));
+
+    } elsif ($s->is_configured() && $s->is_enabled() && $s->is_owned() && ! $s->is_masked() ) {
+	@actions = get_actions($service);
+	$successMessage = sprintf("service %s %s", $service, join(", ", @actions));
+
+    } else {
+	warn sprintf("[INFO] service %s %s: skipped\n", $service, get_reason($s));
+
+    }
+
+    chomp($successMessage);
+    if($successMessage) {
+        warn "[INFO] " . $successMessage . "\n";
+    }
+
+    my $progress = 0.1;
+    foreach (@actions) {
+	$tracker->set_task_progress($tasks{$service}, $progress, $_);
+	if($s->can($_) && ! $s->$_() ) {
+	    $errorMessage .= sprintf("%s service %s failed!\n", $_, $service);
+	    $errors++;	
+	    $failed = 1;
+	}
+	$progress += 0.1;
+    }	    
+
+    chomp($errorMessage);
+    if($failed && $errorMessage) {
+	warn "[WARNING] " . $errorMessage . "\n";
+    }
+
+    $tracker->set_task_done($tasks{$service}, ($failed ? $errorMessage : $successMessage), $failed);
+
+}
+
+
+exit($errors == 0 ? 0 : 1);
+
+sub get_reason
+{
+    my $s = shift;
+
+    my $r = '';
+
+    if( ! $s->is_configured() ) {
+	$r = "is not configured";
+    } elsif( ! $s->is_owned()) {
+	$r = "is not owned by any package";
+    } elsif( $s->is_masked()) {
+	$r = "is masked";
+    } elsif( ! $s->is_enabled()) {
+	$r = "is disabled";
+    } else {
+	$r = "was running";
+    }
+
+    return $r;
+}
+
+sub get_actions
+{
+    my $service = shift;
+
+    my $f =  "services2adjust/$service";
+    my @actions;     
+
+    if (-l "$f") {
+	@actions = ( readlink "$f" );
+    } else {
+	if (open(F, $f)) {
+	    # Read list of actions from the file, and untaint
+	    @actions = map { chomp; /([a-z]+[12]?)/ ; $1 } <F>;
+	    close(F);
+	} else {
+	    warn "[ERROR] Could not open $f: $!";
+	}
+    }
+
+    return @actions;
+}
+

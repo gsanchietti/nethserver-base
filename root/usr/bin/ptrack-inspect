@@ -1,0 +1,95 @@
+#!/usr/bin/python2
+
+#
+# Copyright (C) 2013 Nethesis S.r.l.
+# http://www.nethesis.it - support@nethesis.it
+# 
+# This script is part of NethServer.
+# 
+# NethServer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License,
+# or any later version.
+# 
+# NethServer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with NethServer.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import io
+import json
+import sys
+import getopt
+import types
+
+def usage():
+    sys.stderr.write("Usage: ptrack-inspect [--id|-i] [--failed|-f] FILENAME\n")
+
+def descend(cbk, l, rootpath=[]):
+    for e in l:
+        p = cbk(e, rootpath)
+        descend(cbk, e['children'], rootpath + [p])
+
+def main():
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "if", ["id", "failed"])
+        if(len(args) == 0):
+            raise Exception("Missing FILENAME")
+    except Exception, err:
+        sys.stderr.write(str(err) + "\n")
+        usage()
+        sys.exit(2)
+    
+    try:
+        fh = io.FileIO(args[0])
+        data = json.load(fh)
+        fh.close()
+    except Exception, e:
+        print str(e)
+        usage()
+        sys.exit(1)
+
+    with_id = False
+    with_failed = False
+
+    for o, a in opts:
+        if o in ["-i", "--id"]:
+            with_id = True
+        elif o in ["--failed", "-f"]:
+            with_failed = True
+        else:
+            assert False, "unhandled option"
+
+    out = []
+
+    last_id = data['progress']['last']['id']
+
+    out.append(('total progress', data['progress']['progress'], '%.2f'))
+    out.append(('last task id', last_id, '%d'))
+    out.append('TASKS %s' % ('FAILED' if with_failed else 'ALL'))
+
+    failed = []
+
+    def f(el, rootpath):
+        if(el['code'] or not with_failed):        
+            is_last = '*' if el['id'] == last_id else ' '
+            code = ("%#03x" % el['code']) if el['code'] else '    '
+            out.append("   %s %s" % (code, is_last) + str(". ".join(rootpath + [el['title']])))        
+        return el['title']
+
+    descend(f, data['tasks'], [])
+
+    for i in out:
+        if(isinstance(i, types.StringType)):
+            print i
+        else:
+            template = '%-15s: ' + i[2]
+            print template % i[:2]
+
+
+if __name__ == "__main__":
+    main()

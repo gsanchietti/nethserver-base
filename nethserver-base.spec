@@ -15,10 +15,11 @@ Requires: perl-TimeDate
 
 Requires: yum-plugin-changelog
 Requires: python2-simplejson
-Requires: nethserver-lib, perl(NethServer::Database::Hostname)
 
 Requires: dnf-automatic
+Requires: cronie
 
+BuildRequires:  perl-generators
 BuildRequires: nethserver-devtools
 Requires(post): systemd
 Requires(postun): systemd
@@ -37,7 +38,11 @@ and template system.
 perl createlinks
 
 mkdir -p root%{perl_vendorlib}
+
+%{__install} -d root%{perl_vendorlib} root%{python2_sitelib}
 mv -v lib/perl/{NethServer,esmith} root%{perl_vendorlib}
+cp -av lib/python/nethserver root%{python2_sitelib}
+
 mkdir -p root/%{_nseventsdir}/organization-save
 mkdir -p root/%{_nseventsdir}/%{name}-update
 mkdir -p root/%{_nseventsdir}/tls-policy-save
@@ -56,6 +61,7 @@ rm -rf %{buildroot}
 \|nethserver_events.pyc$| d
 \|nethserver_events.pyo$| d
 ' > %{name}-%{version}-%{release}-filelist
+install -d %{buildroot}{/var/spool/ptrack,/var/lib/nethserver/db}
 
 %files -f %{name}-%{version}-%{release}-filelist
 %defattr(-,root,root)
@@ -74,6 +80,8 @@ rm -rf %{buildroot}
 %config(noreplace) %{_sysconfdir}/nethserver/pkginfo.conf
 %config(noreplace) %{_sysconfdir}/nethserver/eorepo.conf
 %config(noreplace) %attr(0644,root,root) /etc/yum/pluginconf.d/nethserver_events.conf
+%dir %attr(2750,root,adm)  /var/lib/nethserver/db
+%dir %attr(1770,root,adm)  /var/spool/ptrack
 
 %post
 %systemd_post nethserver-system-init.service NetworkManager.service firewalld.service nethserver-config-network.service

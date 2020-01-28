@@ -1,0 +1,199 @@
+#!/usr/bin/python2
+
+#
+# Copyright (C) 2013 Nethesis S.r.l.
+# http://www.nethesis.it - support@nethesis.it
+# 
+# This script is part of NethServer.
+# 
+# NethServer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License,
+# or any later version.
+# 
+# NethServer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with NethServer.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+from __future__ import print_function
+
+import nethserver.ptrack
+import logging
+import logging.handlers
+import os
+import sys
+import signal
+import json
+import io
+import optparse
+
+def printerr(*objs):
+    print(*objs, file=sys.stderr)
+
+def wait_sigusr1():
+    signal.signal(signal.SIGUSR1, lambda s, t: None)
+    signal.pause()
+
+def daemonize():
+    if(os.getppid() == 1):
+        return False
+
+    try:
+        if os.fork() > 0:
+            os.wait()
+            sys.exit(0)
+
+        os.setsid()
+        os.chdir('/')
+
+        os.closerange(0, 3)
+
+        os.open('/dev/null', os.O_RDONLY)
+        os.open('/dev/null', os.O_WRONLY)
+        os.open('/dev/null', os.O_WRONLY)
+        
+        if os.fork() > 0:
+            wait_sigusr1()
+            sys.exit(0)
+
+    except Exception as e:
+        sys.stderr.write("%s\n" % e)
+        os._exit(3)
+
+    return True
+
+def get_config(args):
+    parser = optparse.OptionParser(description='Trace task progress and state')
+    parser.add_option('--socketpath', '-s', action='store', default='', help='Server socket path')
+    parser.add_option('--dumppath', '-d', action='store', default='', help='Server dump path')
+    parser.add_option('--logpath', '-l', action='store', default='/dev/log', help='Server socket path')
+    parser.add_option('--daemon', '-D', action='store_true', default=False, help='Daemonize and detach')
+    parser.add_option('--verbose', '-v', action='store_true', default=False, help='Be verbose')
+    parser.add_option('--readjson', '-j', action='store_true', default=False, help='Read ui parameters from stdin')
+    (config, rest) = parser.parse_args(args)
+    return (config, rest)
+
+
+def configure_logging(config):
+    if(config.logpath == '/dev/log'):
+        log_handler = logging.handlers.SysLogHandler(address='/dev/log')
+        log_handler.setFormatter(logging.Formatter("ptrack [%(process)d]: %(levelname)s %(message)s"))
+    else:
+        log_handler = logging.FileHandler(config.logpath)
+        log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+
+    logging.getLogger().addHandler(log_handler)
+    logging.getLogger().setLevel(logging.DEBUG if config.verbose else logging.INFO)
+
+
+def fork_tsk(config, tsk_args):
+    pid = os.fork()
+    if(pid == 0):
+        #logging.debug("Wait for server to become available")
+        os.closerange(0, 8)
+        os.open('/dev/null', os.O_RDONLY)
+        os.open('/dev/null', os.O_WRONLY)
+        os.open('/dev/null', os.O_WRONLY)
+        logging.debug("Spawned pid %d: exec() %s" % (os.getpid(), tsk_args))
+        os.environ['PTRACK_SOCKETPATH'] = config.socketpath
+        try:
+            os.execv(tsk_args[0], tsk_args)
+        except Exception as e:
+            logging.error("%s: %s" % (tsk_args[0], e))
+            sys.exit(1)
+
+        sys.exit(0)
+
+    return pid
+
+def main(args):
+    (config, tsk_args) = get_config(args)
+    configure_logging(config)
+    uidata = {}
+    tsk_pid = 0
+
+    if config.readjson:
+        try:
+            uidata = json.load(sys.stdin)
+        except Exception as e:
+            logging.error("Could not parse uidata from standard input: %s" % e)
+            sys.exit(1)
+
+    if config.daemon:
+        daemonize()
+
+    if(not config.socketpath):
+        config.socketpath = '/var/run/ptrack-%d.sock' % os.getpid()
+
+    if(not config.dumppath):
+        config.dumppath = '/var/spool/ptrack/task-%d.dump' % os.getpid()
+        
+    #
+    # Start the server
+    #
+    state = nethserver.ptrack.ProgressState()
+    server = nethserver.ptrack.TrackerServer(config.socketpath, state)
+
+    if(len(tsk_args) > 0):
+        tsk_pid = fork_tsk(config, tsk_args)
+
+    def clean_exit_dump(exit_code=128):
+        dumpdata = state.query('tasks')
+        dumpdata['exit_code'] = exit_code
+        dumpdata['task_command_line'] = tsk_args
+        dumpdata['ui'] = uidata
+
+        dfd = io.open(config.dumppath, 'wb')
+        json.dump(dumpdata, dfd, sort_keys=True)
+        dfd.close()
+
+        try:
+            server.close()
+        except Exception as e:
+            logging.error("Error on server close(): %s" % e)
+
+        sys.exit(exit_code)
+
+    def on_sigchld(signum, frame):
+        child_pid, child_status = os.waitpid(tsk_pid, os.WNOHANG)
+        if(tsk_pid == child_pid and os.WIFEXITED(child_status)):
+            tsk_exit_code = os.WEXITSTATUS(child_status)
+            logging.debug("Child %d exited: code: %d, signal: %d" % (child_pid, tsk_exit_code, os.WTERMSIG(child_status)))
+            clean_exit_dump(tsk_exit_code)
+        elif(os.WIFSTOPPED(child_status)):
+            logging.debug("Child %d stopped, status: %d." % (child_pid, os.WSTOPSIG(child_status)))
+        elif(os.WIFSIGNALED(child_status)):
+            logging.debug("Child %d signalled, status: %d." % (child_pid, os.WTERMSIG(child_status)))
+        elif(os.WIFCONTINUED(child_status)):
+            logging.debug("Child %d continued." % (child_pid))
+
+    signal.signal(signal.SIGHUP, lambda s, f: clean_exit_dump(129) )
+    signal.signal(signal.SIGTERM, lambda s, f: clean_exit_dump(130) )
+
+    if config.daemon:
+        # Server ready: notify parent and complete detaching
+        os.kill(os.getppid(), signal.SIGUSR1)
+
+    signal.signal(signal.SIGCHLD, on_sigchld)
+
+    # Start to serve:
+    try:
+        server.loop()
+    except KeyboardInterrupt as e:
+        logging.debug("Keyboard interrupt %s" % e)
+        clean_exit_dump(131)
+    except Exception as e:
+        logging.error("Error %s" % e)
+        clean_exit_dump(132)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 0:
+        main(sys.argv[1:])
+    else:
+        main([])

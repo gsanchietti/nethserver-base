@@ -1,0 +1,5 @@
+#
+# ptrack_purge: clean ptrack *.dump files older than seven days
+#
+
+15 0 * * 0	root	find /var/spool/ptrack -name "*.dump" -type f -mtime +7 -exec rm -f {} \;
