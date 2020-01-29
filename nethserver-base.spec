@@ -19,6 +19,9 @@ Requires: python2-simplejson
 Requires: dnf-automatic
 Requires: cronie
 
+Requires: python2
+Provides: /usr/bin/python
+
 BuildRequires:  perl-generators
 BuildRequires: nethserver-devtools
 Requires(post): systemd
